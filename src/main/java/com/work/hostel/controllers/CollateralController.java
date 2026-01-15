@@ -25,6 +25,6 @@ public class CollateralController {
     }
     @DeleteMapping("/delete/{id}")
     public void deleteCollateral(@PathVariable Long id) {
-        collateralRepo.deleteById(id);
+        collateralService.delete(id);
     }
 }

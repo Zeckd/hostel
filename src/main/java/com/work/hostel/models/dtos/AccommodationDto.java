@@ -10,6 +10,7 @@ public record AccommodationDto(
         String name,
         Integer perPersonPrice,
         Integer maxResidents,
+        Integer fullRentPrice,
         boolean active,
         List<Long> residents
 ) {

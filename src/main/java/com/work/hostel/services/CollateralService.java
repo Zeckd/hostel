@@ -8,4 +8,6 @@ public interface CollateralService {
 
 
     CollateralDto update(Long id, boolean returned);
+
+    void delete(Long id);
 }

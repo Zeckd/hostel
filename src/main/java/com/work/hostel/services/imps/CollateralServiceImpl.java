@@ -52,4 +52,20 @@ public class CollateralServiceImpl implements CollateralService {
         collateralRepo.save(collateral);
         return collateralMapper.toCollateralDto(collateral);
     }
+    // CollateralServiceImpl.java
+
+    @Override
+    @Transactional
+    public void delete(Long residentId) {
+        Resident resident = residentRepo.findById(residentId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Житель не найден"));
+
+        Collateral collateral = resident.getCollateral();
+        if (collateral != null) {
+            resident.setCollateral(null);
+            residentRepo.save(resident);
+
+            collateralRepo.delete(collateral);
+        }
+    }
 }

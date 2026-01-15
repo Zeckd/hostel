@@ -7,12 +7,19 @@ document.addEventListener('DOMContentLoaded', () => {
     setupForms();
 });
 
+// === API КЛИЕНТ ===
 async function apiRequest(endpoint, method = 'GET', body = null) {
     try {
         const options = { method, headers: { 'Content-Type': 'application/json' } };
         if (body) options.body = JSON.stringify(body);
         const response = await fetch(`${API_URL}${endpoint}`, options);
-        if (!response.ok) throw new Error(await response.text());
+
+        // Исправление: более детальная обработка ошибок (например, 404 Not Found)
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(errText || `Ошибка сервера: ${response.status}`);
+        }
+
         const text = await response.text();
         return text ? JSON.parse(text) : true;
     } catch (e) {
@@ -27,14 +34,14 @@ async function loadAllData() {
         apiRequest('/accommodation/get/all'),
         apiRequest('/resident/getAll')
     ]);
-    if (rooms) globalRooms = rooms;
-    if (residents) globalResidents = residents;
+    globalRooms = rooms || [];
+    globalResidents = residents || [];
     updateDashboard();
     renderRooms();
     renderResidents();
 }
 
-// === ОТРИСОВКА ===
+// === ОТРИСОВКА КОМНАТ ===
 function renderRooms() {
     const grid = document.getElementById('rooms-grid');
     const select = document.getElementById('select-room-resident');
@@ -45,16 +52,17 @@ function renderRooms() {
 
     globalRooms.forEach(room => {
         const occupied = room.residents ? room.residents.length : 0;
-        const isFull = occupied >= room.maxResidents;
-
         const opt = document.createElement('option');
         opt.value = room.id;
         opt.textContent = `${room.name} (${occupied}/${room.maxResidents})`;
-        if(isFull) opt.disabled = true;
+        if(occupied >= room.maxResidents) opt.disabled = true;
         select.appendChild(opt);
 
         const card = document.createElement('div');
-        card.className = 'card room-card';
+        card.className = 'card room-card clickable';
+        card.onclick = (e) => {
+            if(!e.target.closest('button')) showRoomDetails(room.id);
+        };
         card.innerHTML = `
             <div class="room-top">
                 <h3>${room.name} <span class="badge ${room.type === 'APARTMENT' ? 'badge-blue' : 'badge-gray'}">${room.type}</span></h3>
@@ -65,10 +73,60 @@ function renderRooms() {
             </div>
             <p><b>${room.perPersonPrice}</b> сом/чел</p>
             <div class="progress-bar"><div class="fill" style="width: ${(occupied/room.maxResidents)*100}%"></div></div>
-            <small>Занято: ${occupied} из ${room.maxResidents}</small>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px;">
+                <small>Занято: ${occupied} / ${room.maxResidents}</small>
+                <button class="btn-sm" onclick="openAddResidentToRoom(${room.id})">+ Житель</button>
+            </div>
         `;
         grid.appendChild(card);
     });
+}
+
+function showRoomDetails(roomId) {
+    const room = globalRooms.find(r => r.id === roomId);
+    const residents = globalResidents.filter(res => res.accommodationId === roomId);
+    const content = document.getElementById('room-details-content');
+    content.innerHTML = `
+        <h2>${room.name} <small>(${room.type})</small></h2>
+        <div class="info-grid">
+            <div class="info-section">
+                <h4>Информация</h4>
+                <p>Емкость: ${room.maxResidents} мест</p>
+                <p>Цена/чел: ${room.perPersonPrice} сом</p>
+                <p>Полная аренда: ${room.fullRentPrice} сом</p>
+            </div>
+        </div>
+        <hr>
+        <h4>Жители комнаты:</h4>
+        <div class="table-container">
+            <table>
+                ${residents.length ? residents.map(r => `
+                    <tr>
+                        <td><b>${r.fullName}</b></td>
+                        <td align="right"><button class="action-btn" onclick="showResidentDetails(${r.id})">👁️</button></td>
+                    </tr>
+                `).join('') : '<tr><td>Пусто</td></tr>'}
+            </table>
+        </div>
+        <button class="btn-primary" style="margin-top:20px; width:100%" onclick="openAddResidentToRoom(${room.id})">+ Поселить сюда</button>
+    `;
+    openModal('modal-room-details');
+}
+
+// === ЛОГИКА ОПЛАТ И ЖИТЕЛЕЙ ===
+function getMonthlyPaymentStats(res, room) {
+    const price = room ? room.perPersonPrice : 0;
+    const now = new Date();
+    const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+    const paidThisMonth = (res.payments || [])
+        .filter(p => {
+            const pDate = new Date(p.paidAt);
+            return `${pDate.getFullYear()}-${String(pDate.getMonth() + 1).padStart(2, '0')}` === currentMonthStr;
+        })
+        .reduce((sum, p) => sum + p.amount, 0);
+
+    return { paid: paidThisMonth, total: price, isFullyPaid: price > 0 && paidThisMonth >= price };
 }
 
 function renderResidents() {
@@ -78,37 +136,31 @@ function renderResidents() {
 
     globalResidents.forEach(res => {
         const room = globalRooms.find(r => r.id === res.accommodationId);
-        const monthlyRate = room ? (room.perPersonPrice || 0) : 0;
-        const paidThisMonth = (res.payments || []).reduce((sum, p) => sum + p.amount, 0); // Упрощено для примера
-        const isFullyPaid = paidThisMonth >= monthlyRate;
-
+        const stats = getMonthlyPaymentStats(res, room);
         const hasCollateral = res.collateral && res.collateral.description;
         const isReturned = res.collateral && res.collateral.returned;
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td><b>${res.fullName}</b><br><small>${res.phoneNumber}</small></td>
+            <td><b>${res.fullName}</b></td>
             <td>${room ? room.name : '---'}</td>
             <td>
-                <span class="badge ${isFullyPaid ? 'badge-green' : 'badge-red'}">${isFullyPaid ? 'Оплачено' : 'Долг'}</span>
-                <div class="amount-progress">${paidThisMonth} / ${monthlyRate}</div>
+                <span class="badge ${stats.isFullyPaid ? 'badge-green' : (stats.paid > 0 ? 'badge-orange' : 'badge-red')}">
+                    ${stats.isFullyPaid ? 'Оплачено' : (stats.paid > 0 ? 'Частично' : 'Долг')}
+                </span>
+                <div class="amount-progress">${stats.paid} / ${stats.total} сом</div>
             </td>
             <td>
                 ${hasCollateral ? `
-                    <div style="display:flex; align-items:center; gap:5px">
-                        <span class="badge ${isReturned ? 'badge-gray' : 'badge-blue'}" onclick="toggleCollateral(${res.id}, ${!isReturned})" style="cursor:pointer">
-                            ${isReturned ? '✅ Возврат' : '📦 У нас'}
-                        </span>
-                        <button onclick="deleteCollateral(${res.id})" style="border:none;background:none;color:red;cursor:pointer">&times;</button>
-                    </div>
+                    <button class="badge ${isReturned ? 'badge-gray' : 'badge-blue'}" onclick="toggleCollateral(${res.id}, ${!isReturned})">
+                        ${isReturned ? '✅ Возвращен' : '📦 У нас'}
+                    </button>
                 ` : '---'}
             </td>
             <td>
                 <div class="actions-group">
                     <button class="action-btn" onclick="showResidentDetails(${res.id})">👁️</button>
-                    <button class="action-btn" onclick="prepareEditResident(${res.id})">✏️</button>
                     <button class="action-btn" onclick="openPayModal(${res.id}, '${res.fullName}')">💰</button>
-                    <button class="action-btn" onclick="openColModal(${res.id}, '${res.fullName}')">📦</button>
                     <button class="action-btn btn-del" onclick="deleteResident(${res.id})">🗑️</button>
                 </div>
             </td>
@@ -117,119 +169,145 @@ function renderResidents() {
     });
 }
 
-// === УПРАВЛЕНИЕ ФОРМАМИ ===
+function showResidentDetails(resId) {
+    const res = globalResidents.find(r => r.id === resId);
+    if(!res) return;
+    const room = globalRooms.find(r => r.id === res.accommodationId);
+    const stats = getMonthlyPaymentStats(res, room);
+    const content = document.getElementById('resident-details-content');
+
+    content.innerHTML = `
+        <h2>${res.fullName}</h2>
+        <div class="info-grid">
+            <div class="info-section">
+                <h4>📇 Данные</h4>
+                <p><b>Телефон:</b> ${res.phoneNumber}</p>
+                <p><b>Комната:</b> ${room ? room.name : '---'}</p>
+                <p><b>Оплата:</b> ${stats.paid} / ${stats.total}</p>
+            </div>
+            <div class="info-section">
+                <h4>📦 Залог</h4>
+                ${res.collateral ? `
+                    <p>${res.collateral.description}</p>
+                    <button class="btn-submit ${res.collateral.returned ? 'btn-gray' : ''}" onclick="toggleCollateral(${res.id}, ${!res.collateral.returned})">
+                        ${res.collateral.returned ? 'Вернуть "У нас"' : 'Вернуть залог жителю'}
+                    </button>
+                    <button class="btn-sm" style="margin-top:10px; color:red" onclick="deleteCollateral(${res.id})">Удалить запись</button>
+                ` : `<button class="btn-sm" onclick="openColModal(${res.id}, '${res.fullName}')">+ Добавить залог</button>`}
+            </div>
+        </div>
+        <hr>
+        <h4>💰 История платежей</h4>
+        <div class="history-list">
+            ${(res.payments || []).map(p => `<div class="history-item"><span>${new Date(p.paidAt).toLocaleDateString()}</span><b>+ ${p.amount} сом</b></div>`).join('')}
+        </div>
+    `;
+    openModal('modal-resident-details');
+}
+
+// === УДАЛЕНИЕ И ПЕРЕКЛЮЧЕНИЕ (ГЛОБАЛЬНЫЕ) ===
+async function deleteRoom(id) { if(confirm("Удалить комнату?")) { if(await apiRequest(`/accommodation/delete/${id}`, 'DELETE')) loadAllData(); } }
+async function deleteResident(id) { if(confirm("Удалить жителя?")) { if(await apiRequest(`/resident/delete/${id}`, 'DELETE')) loadAllData(); } }
+
+async function deleteCollateral(resId) {
+    if(!confirm("Вы уверены, что хотите ПОЛНОСТЬЮ УДАЛИТЬ запись о залоге?")) return;
+    // Путь /collateral/delete/{resId} должен существовать на бэкенде
+    if (await apiRequest(`/collateral/delete/${resId}`, 'DELETE')) {
+        await loadAllData();
+        if (document.getElementById('modal-resident-details').style.display === 'flex') showResidentDetails(resId);
+    }
+}
+
+async function toggleCollateral(resId, status) {
+    if (await apiRequest(`/collateral/${resId}?returned=${status}`, 'PATCH')) {
+        await loadAllData();
+        if (document.getElementById('modal-resident-details').style.display === 'flex') showResidentDetails(resId);
+    }
+}
+
+// === ФОРМЫ ===
 function setupForms() {
-    // Житель
     document.getElementById('form-resident').onsubmit = async (e) => {
         e.preventDefault();
         const f = e.target;
         const id = f.dataset.editId;
-        const body = {
-            fullName: f.fullName.value,
-            phoneNumber: f.phoneNumber.value,
-            arrivalDate: f.arrivalDate.value,
-            accommodationId: parseInt(f.accommodationId.value)
-        };
-        if (await apiRequest(id ? `/resident/${id}` : '/resident/create', id ? 'PATCH' : 'POST', body)) {
-            closeAllModals(); loadAllData();
-        }
+        const body = { fullName: f.fullName.value, phoneNumber: f.phoneNumber.value, arrivalDate: f.arrivalDate.value, accommodationId: parseInt(f.accommodationId.value) };
+        if (await apiRequest(id ? `/resident/${id}` : '/resident/create', id ? 'PATCH' : 'POST', body)) { closeAllModals(); loadAllData(); }
     };
 
-    // Комната
     document.getElementById('form-accommodation').onsubmit = async (e) => {
         e.preventDefault();
         const f = e.target;
         const id = f.dataset.editId;
-        const body = {
-            name: f.name.value,
-            type: f.type.value,
-            maxResidents: parseInt(f.maxResidents.value),
-            perPersonPrice: parseInt(f.perPersonPrice.value),
-            fullRentPrice: parseInt(f.fullRentPrice.value)
-        };
-        if (await apiRequest(id ? `/accommodation/${id}` : '/accommodation/create', id ? 'PATCH' : 'POST', body)) {
-            closeAllModals(); loadAllData();
-        }
+        const body = { name: f.name.value, type: f.type.value, maxResidents: parseInt(f.maxResidents.value), perPersonPrice: parseInt(f.perPersonPrice.value), fullRentPrice: parseInt(f.fullRentPrice.value) };
+        if (await apiRequest(id ? `/accommodation/${id}` : '/accommodation/create', id ? 'PATCH' : 'POST', body)) { closeAllModals(); loadAllData(); }
     };
 
-    // Оплата и Залог
     document.getElementById('form-payment').onsubmit = async (e) => {
         e.preventDefault();
-        const body = { residentId: parseInt(e.target.residentId.value), amount: parseInt(e.target.amount.value) };
-        if (await apiRequest('/payment/create', 'POST', body)) { closeAllModals(); loadAllData(); }
+        const resId = parseInt(e.target.residentId.value);
+        const body = { residentId: resId, amount: parseInt(e.target.amount.value) };
+        // Исправление пути: проверьте, что на бэкенде путь именно /payment/create
+        if (await apiRequest('/payment/create', 'POST', body)) {
+            closeAllModals();
+            await loadAllData();
+            showResidentDetails(resId);
+        }
     };
 
     document.getElementById('form-collateral').onsubmit = async (e) => {
         e.preventDefault();
-        const body = { residentId: parseInt(e.target.residentId.value), description: e.target.description.value };
-        if (await apiRequest('/collateral/create', 'POST', body)) { closeAllModals(); loadAllData(); }
+        const resId = parseInt(e.target.residentId.value);
+        const body = { residentId: resId, description: e.target.description.value };
+        if (await apiRequest('/collateral/create', 'POST', body)) {
+            closeAllModals();
+            await loadAllData();
+            showResidentDetails(resId);
+        }
     };
 }
 
-// === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
-function openAddRoomModal() {
-    const f = document.getElementById('form-accommodation');
-    f.reset(); delete f.dataset.editId;
-    document.getElementById('modal-room-title').innerText = "Создать комнату";
-    openModal('modal-accommodation');
-}
-
-function prepareEditRoom(id) {
-    const room = globalRooms.find(r => r.id === id);
-    const f = document.getElementById('form-accommodation');
-    f.name.value = room.name;
-    f.type.value = room.type;
-    f.maxResidents.value = room.maxResidents;
-    f.perPersonPrice.value = room.perPersonPrice;
-    f.fullRentPrice.value = room.fullRentPrice;
-    f.dataset.editId = id;
-    document.getElementById('modal-room-title').innerText = "Изменить комнату";
-    openModal('modal-accommodation');
-}
-
-function openAddResidentModal() {
-    const f = document.getElementById('form-resident');
-    f.reset(); delete f.dataset.editId;
-    document.getElementById('modal-resident-title').innerText = "Новый житель";
-    openModal('modal-resident');
-}
-
-function prepareEditResident(id) {
-    const res = globalResidents.find(r => r.id === id);
-    const f = document.getElementById('form-resident');
-    f.fullName.value = res.fullName;
-    f.phoneNumber.value = res.phoneNumber;
-    f.arrivalDate.value = res.arrivalDate || '';
-    f.accommodationId.value = res.accommodationId;
-    f.dataset.editId = id;
-    document.getElementById('modal-resident-title').innerText = "Изменить жителя";
-    openModal('modal-resident');
-}
-
-async function deleteRoom(id) { if(confirm("Удалить?")) { await apiRequest(`/accommodation/delete/${id}`, 'DELETE'); loadAllData(); } }
-async function deleteResident(id) { if(confirm("Удалить?")) { await apiRequest(`/resident/delete/${id}`, 'DELETE'); loadAllData(); } }
-async function toggleCollateral(resId, status) { await apiRequest(`/collateral/${resId}?returned=${status}`, 'PATCH'); loadAllData(); }
-async function deleteCollateral(resId) { if(confirm("Удалить залог?")) { await apiRequest(`/collateral/delete/${resId}`, 'DELETE'); loadAllData(); } }
-
+// === УПРАВЛЕНИЕ МОДАЛКАМИ ===
 function openModal(id) { document.getElementById(id).style.display = 'flex'; }
 function closeAllModals() { document.querySelectorAll('.modal').forEach(m => m.style.display = 'none'); }
 function switchPage(id) {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.getElementById('page-' + id).classList.add('active');
     document.querySelectorAll('.menu-item').forEach(m => m.classList.remove('active'));
-    event.currentTarget.classList.add('active');
+    if(event) event.currentTarget.classList.add('active');
 }
-
-function openPayModal(id, name) { document.getElementById('pay-res-id').value = id; document.getElementById('pay-res-name').innerText = name; openModal('modal-payment'); }
-function openColModal(id, name) { document.getElementById('col-res-id').value = id; document.getElementById('col-res-name').innerText = name; openModal('modal-collateral'); }
+function openPayModal(id, name) {
+    document.getElementById('pay-res-id').value = id;
+    document.getElementById('pay-res-name').innerText = name;
+    openModal('modal-payment');
+}
+function openColModal(id, name) {
+    document.getElementById('col-res-id').value = id;
+    document.getElementById('col-res-name').innerText = name;
+    openModal('modal-collateral');
+}
+function openAddResidentToRoom(roomId) {
+    const f = document.getElementById('form-resident'); f.reset(); delete f.dataset.editId;
+    f.accommodationId.value = roomId;
+    openModal('modal-resident');
+}
+function openAddRoomModal() {
+    const f = document.getElementById('form-accommodation'); f.reset(); delete f.dataset.editId;
+    openModal('modal-accommodation');
+}
+function prepareEditRoom(id) {
+    const room = globalRooms.find(r => r.id === id);
+    const f = document.getElementById('form-accommodation');
+    f.name.value = room.name; f.type.value = room.type;
+    f.maxResidents.value = room.maxResidents; f.perPersonPrice.value = room.perPersonPrice;
+    f.fullRentPrice.value = room.fullRentPrice; f.dataset.editId = id;
+    openModal('modal-accommodation');
+}
 
 function updateDashboard() {
     document.getElementById('stat-total-residents').innerText = globalResidents.length;
-    document.getElementById('stat-total-money').innerText = globalResidents.reduce((s, r) => s + (r.payments || []).reduce((ss, p) => ss + p.amount, 0), 0) + " c";
+    const total = globalResidents.reduce((s, r) => s + (r.payments || []).reduce((ss, p) => ss + p.amount, 0), 0);
+    document.getElementById('stat-total-money').innerText = total + " c";
     document.getElementById('stat-free-places').innerText = globalRooms.reduce((s, r) => s + (r.maxResidents - (r.residents?.length || 0)), 0);
 }
-
-function showResidentDetails(id) {
-    const res = globalResidents.find(r => r.id === id);
-    alert(`Житель: ${res.fullName}\nТелефон: ${res.phoneNumber}\nЗаезд: ${res.arrivalDate}`);
-}
+window.onclick = (e) => { if(e.target.classList.contains('modal')) closeAllModals(); };
