@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hostel Pro</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="sidebar">
+    <div class="logo">Hostel<span>PRO</span></div>
+    <nav class="menu">
+        <button class="menu-item active" onclick="switchPage('dashboard')">📊 Обзор</button>
+        <button class="menu-item" onclick="switchPage('rooms')">🚪 Комнаты</button>
+        <button class="menu-item" onclick="switchPage('residents')">👥 Жители</button>
+    </nav>
+</div>
+
+<div class="main-content">
+    <section id="page-dashboard" class="page active">
+        <div class="top-stats">
+            <div class="stat-card"><h3>Всего жителей</h3><p id="stat-total-residents">0</p></div>
+            <div class="stat-card"><h3>Свободных мест</h3><p id="stat-free-places">0</p></div>
+            <div class="stat-card"><h3>Касса (Общая)</h3><p id="stat-total-money">0 c</p></div>
+        </div>
+        <div class="welcome-banner">
+            <h1>Панель управления</h1>
+            <p>Выберите раздел меню для начала работы.</p>
+        </div>
+    </section>
+
+    <section id="page-residents" class="page">
+        <div class="page-header">
+            <h2>Список жителей</h2>
+            <button class="btn-primary" onclick="openAddResidentModal()">+ Заселить</button>
+        </div>
+        <div class="table-container">
+            <table>
+                <thead>
+                <tr>
+                    <th>Имя</th>
+                    <th>Комната</th>
+                    <th>Оплата</th>
+                    <th>Залог</th>
+                    <th>Действия</th>
+                </tr>
+                </thead>
+                <tbody id="residents-tbody"></tbody>
+            </table>
+        </div>
+    </section>
+
+    <section id="page-rooms" class="page">
+        <div class="page-header">
+            <h2>Жилой фонд</h2>
+            <button class="btn-primary" onclick="openAddRoomModal()">+ Добавить комнату</button>
+        </div>
+        <div id="rooms-grid" class="rooms-grid"></div>
+    </section>
+</div>
+
+<div id="modal-resident" class="modal">
+    <div class="modal-content">
+        <span class="close-btn" onclick="closeAllModals()">&times;</span>
+        <h2 id="modal-resident-title">Новый житель</h2>
+        <form id="form-resident">
+            <label>ФИО</label><input type="text" name="fullName" required>
+            <label>Телефон</label><input type="text" name="phoneNumber" required>
+            <label>Дата заезда</label><input type="date" name="arrivalDate" required>
+            <label>Комната</label><select name="accommodationId" id="select-room-resident" required></select>
+            <button type="submit" class="btn-submit">Сохранить</button>
+        </form>
+    </div>
+</div>
+
+<div id="modal-accommodation" class="modal">
+    <div class="modal-content">
+        <span class="close-btn" onclick="closeAllModals()">&times;</span>
+        <h2 id="modal-room-title">Создать комнату</h2>
+        <form id="form-accommodation">
+            <label>Название (№)</label><input type="text" name="name" required>
+            <label>Тип</label><select name="type"><option value="ROOM">ROOM</option><option value="APARTMENT">APARTMENT</option></select>
+            <div class="row">
+                <div style="flex:1"><label>Мест</label><input type="number" name="maxResidents" required></div>
+                <div style="flex:1"><label>Цена/чел</label><input type="number" name="perPersonPrice" required></div>
+            </div>
+            <label>Цена за всю комнату</label><input type="number" name="fullRentPrice" value="0">
+            <button type="submit" class="btn-submit">Сохранить</button>
+        </form>
+    </div>
+</div>
+
+<div id="modal-payment" class="modal">
+    <div class="modal-content">
+        <span class="close-btn" onclick="closeAllModals()">&times;</span>
+        <h3>Принять оплату</h3>
+        <p id="pay-res-name"></p>
+        <form id="form-payment">
+            <input type="hidden" name="residentId" id="pay-res-id">
+            <label>Сумма (сом)</label><input type="number" name="amount" required>
+            <button type="submit" class="btn-submit">Оплатить</button>
+        </form>
+    </div>
+</div>
+
+<div id="modal-collateral" class="modal">
+    <div class="modal-content">
+        <span class="close-btn" onclick="closeAllModals()">&times;</span>
+        <h3>Залог</h3>
+        <p id="col-res-name"></p>
+        <form id="form-collateral">
+            <input type="hidden" name="residentId" id="col-res-id">
+            <label>Описание</label><textarea name="description" required></textarea>
+            <button type="submit" class="btn-submit">Сохранить</button>
+        </form>
+    </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
