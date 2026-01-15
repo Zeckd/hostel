@@ -90,3 +90,29 @@ button.badge:hover {
     color: #6b7280;
     margin-top: 4px;
 }
+.room-card.over {
+    border: 2px dashed #4a90e2;
+    transform: scale(1.02);
+    background-color: #f0f7ff;
+}
+
+.room-card[draggable="true"] {
+    cursor: grab;
+}
+
+.room-card[draggable="true"]:active {
+    cursor: grabbing;
+}
+tr[draggable="true"] {
+    cursor: move;
+}
+
+.dragging-row {
+    background-color: #f9f9f9;
+    opacity: 0.5;
+}
+
+/* Стили для комнат (чтобы не путались) */
+.room-card.over {
+    border: 2px dashed #4a90e2 !important;
+}

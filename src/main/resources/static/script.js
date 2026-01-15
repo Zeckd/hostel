@@ -50,7 +50,7 @@ function renderRooms() {
     grid.innerHTML = '';
     select.innerHTML = '<option value="" disabled selected>Выберите комнату</option>';
 
-    globalRooms.forEach(room => {
+    globalRooms.forEach((room , index) => {
         const occupied = room.residents ? room.residents.length : 0;
         const opt = document.createElement('option');
         opt.value = room.id;
@@ -60,6 +60,8 @@ function renderRooms() {
 
         const card = document.createElement('div');
         card.className = 'card room-card clickable';
+        card.setAttribute('draggable', 'true');
+        card.dataset.index = index;
         card.onclick = (e) => {
             if(!e.target.closest('button')) showRoomDetails(room.id);
         };
@@ -69,6 +71,7 @@ function renderRooms() {
                 <div class="room-actions">
                     <button class="action-btn" onclick="prepareEditRoom(${room.id})">✏️</button>
                     <button class="action-btn btn-del" onclick="deleteRoom(${room.id})">&times;</button>
+                   
                 </div>
             </div>
             <p><b>${room.perPersonPrice}</b> сом/чел</p>
@@ -78,7 +81,52 @@ function renderRooms() {
                 <button class="btn-sm" onclick="openAddResidentToRoom(${room.id})">+ Житель</button>
             </div>
         `;
+        addDragAndDropHandlers(card);
         grid.appendChild(card);
+    });
+}
+// === ЛОГИКА ПЕРЕМЕЩЕНИЯ (DRAG & DROP) ===
+let dragSrcEl = null;
+
+function addDragAndDropHandlers(el) {
+    el.addEventListener('dragstart', function(e) {
+        dragSrcEl = this;
+        e.dataTransfer.effectAllowed = 'move';
+        this.style.opacity = '0.4';
+    });
+
+    el.addEventListener('dragover', function(e) {
+        if (e.preventDefault) e.preventDefault();
+        return false;
+    });
+
+    el.addEventListener('dragenter', function() { this.classList.add('over'); });
+    el.addEventListener('dragleave', function() { this.classList.remove('over'); });
+
+    el.addEventListener('drop', function(e) {
+        if (e.stopPropagation) e.stopPropagation();
+
+        // Внутри el.addEventListener('drop', function(e) ... для комнат
+        if (dragSrcEl !== this) {
+            const fromIdx = parseInt(dragSrcEl.dataset.index);
+            const toIdx = parseInt(this.dataset.index);
+
+            const temp = globalRooms[fromIdx];
+            globalRooms.splice(fromIdx, 1);
+            globalRooms.splice(toIdx, 0, temp);
+
+            // СОХРАНЯЕМ ПОРЯДОК КОМНАТ
+            localStorage.setItem('roomsOrder', JSON.stringify(globalRooms.map(r => r.id)));
+
+            renderRooms();
+        }
+
+        return false;
+    });
+
+    el.addEventListener('dragend', function() {
+        this.style.opacity = '1';
+        document.querySelectorAll('.room-card').forEach(card => card.classList.remove('over'));
     });
 }
 
@@ -134,13 +182,17 @@ function renderResidents() {
     if (!tbody) return;
     tbody.innerHTML = '';
 
-    globalResidents.forEach(res => {
+    globalResidents.forEach((res,index) => {
         const room = globalRooms.find(r => r.id === res.accommodationId);
         const stats = getMonthlyPaymentStats(res, room);
         const hasCollateral = res.collateral && res.collateral.description;
         const isReturned = res.collateral && res.collateral.returned;
 
+
         const tr = document.createElement('tr');
+        tr.setAttribute('draggable', 'true'); // Разрешаем перетаскивание строки
+        tr.dataset.index = index;
+        addResidentDragHandlers(tr);
         tr.innerHTML = `
             <td><b>${res.fullName}</b></td>
             <td>${room ? room.name : '---'}</td>
@@ -162,11 +214,101 @@ function renderResidents() {
                     <button class="action-btn" onclick="showResidentDetails(${res.id})">👁️</button>
                     <button class="action-btn" onclick="openPayModal(${res.id}, '${res.fullName}')">💰</button>
                     <button class="action-btn btn-del" onclick="deleteResident(${res.id})">🗑️</button>
+                    <button class="action-btn" onclick="prepareEditResident(${res.id})">✏️</button>
                 </div>
             </td>
         `;
         tbody.appendChild(tr);
     });
+}
+let dragSrcResEl = null;
+
+function addResidentDragHandlers(el) {
+    el.addEventListener('dragstart', function(e) {
+        dragSrcResEl = this;
+        this.classList.add('dragging-row');
+    });
+
+    el.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        return false;
+    });
+
+    el.addEventListener('drop', function(e) {
+        if (dragSrcResEl !== this) {
+            const fromIdx = parseInt(dragSrcResEl.dataset.index);
+            const toIdx = parseInt(this.dataset.index);
+
+            // Меняем в массиве
+            const temp = globalResidents[fromIdx];
+            globalResidents.splice(fromIdx, 1);
+            globalResidents.splice(toIdx, 0, temp);
+
+            // Сохраняем новый порядок ID в localStorage
+            const newOrder = globalResidents.map(r => r.id);
+            localStorage.setItem('residentsOrder', JSON.stringify(newOrder));
+
+            renderResidents();
+        }
+    });
+
+    el.addEventListener('dragend', function() {
+        this.classList.remove('dragging-row');
+    });
+}
+function sortElementsBySavedOrder(elements, storageKey) {
+    const savedOrder = JSON.parse(localStorage.getItem(storageKey) || '[]');
+    if (savedOrder.length === 0) return elements;
+
+    return [...elements].sort((a, b) => {
+        let indexA = savedOrder.indexOf(a.id);
+        let indexB = savedOrder.indexOf(b.id);
+
+        // Если элемента нет в сохраненном порядке (например, новый),
+        // ставим его в конец (9999)
+        if (indexA === -1) indexA = 9999;
+        if (indexB === -1) indexB = 9999;
+
+        return indexA - indexB;
+    });
+}
+async function loadAllData() {
+    const [rooms, residents] = await Promise.all([
+        apiRequest('/accommodation/get/all'),
+        apiRequest('/resident/getAll')
+    ]);
+
+    // Сохраняем и сортируем комнаты
+    const unsortedRooms = rooms || [];
+    globalRooms = sortElementsBySavedOrder(unsortedRooms, 'roomsOrder');
+    // Если порядка еще нет, сохраним текущий (начальный)
+    if (!localStorage.getItem('roomsOrder')) {
+        localStorage.setItem('roomsOrder', JSON.stringify(globalRooms.map(r => r.id)));
+    }
+
+    // Сохраняем и сортируем жителей
+    const unsortedResidents = residents || [];
+    globalResidents = sortElementsBySavedOrder(unsortedResidents, 'residentsOrder');
+    if (!localStorage.getItem('residentsOrder')) {
+        localStorage.setItem('residentsOrder', JSON.stringify(globalResidents.map(r => r.id)));
+    }
+
+    updateDashboard();
+    renderRooms();
+    renderResidents();
+}
+function prepareEditResident(id) {
+    const res = globalResidents.find(r => r.id === id);
+    const f = document.getElementById('form-resident');
+
+    f.fullName.value = res.fullName;
+    f.phoneNumber.value = res.phoneNumber;
+    f.arrivalDate.value = res.arrivalDate ? res.arrivalDate.split('T')[0] : '';
+    f.accommodationId.value = res.accommodationId;
+    f.dataset.editId = id; // Запоминаем ID для сохранения
+
+    document.getElementById('modal-resident-title').innerText = "Редактировать жителя";
+    openModal('modal-resident');
 }
 
 function showResidentDetails(resId) {
@@ -306,11 +448,32 @@ function prepareEditRoom(id) {
     f.fullRentPrice.value = room.fullRentPrice; f.dataset.editId = id;
     openModal('modal-accommodation');
 }
-
 function updateDashboard() {
+    // 1. Общее количество жильцов
     document.getElementById('stat-total-residents').innerText = globalResidents.length;
-    const total = globalResidents.reduce((s, r) => s + (r.payments || []).reduce((ss, p) => ss + p.amount, 0), 0);
-    document.getElementById('stat-total-money').innerText = total + " c";
-    document.getElementById('stat-free-places').innerText = globalRooms.reduce((s, r) => s + (r.maxResidents - (r.residents?.length || 0)), 0);
+
+    // 2. Расчет кассы ТОЛЬКО за ТЕКУЩИЙ МЕСЯЦ
+    const now = new Date();
+    const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+    const totalMoneyThisMonth = globalResidents.reduce((sum, resident) => {
+        // Считаем платежи конкретного жителя только за этот месяц
+        const residentPaidThisMonth = (resident.payments || [])
+            .filter(p => {
+                const pDate = new Date(p.paidAt);
+                const pMonthStr = `${pDate.getFullYear()}-${String(pDate.getMonth() + 1).padStart(2, '0')}`;
+                return pMonthStr === currentMonthStr;
+            })
+            .reduce((s, p) => s + p.amount, 0);
+
+        return sum + residentPaidThisMonth;
+    }, 0);
+
+    // Обновляем текст в кассе
+    document.getElementById('stat-total-money').innerText = totalMoneyThisMonth + " сом";
+
+    // 3. Свободные места
+    const freePlaces = globalRooms.reduce((s, r) => s + (r.maxResidents - (r.residents?.length || 0)), 0);
+    document.getElementById('stat-free-places').innerText = freePlaces;
 }
 window.onclick = (e) => { if(e.target.classList.contains('modal')) closeAllModals(); };
