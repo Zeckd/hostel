@@ -175,15 +175,18 @@ function showResidentDetails(resId) {
     const room = globalRooms.find(r => r.id === res.accommodationId);
     const stats = getMonthlyPaymentStats(res, room);
     const content = document.getElementById('resident-details-content');
+    const dateFormatted = res.arrivalDate ? new Date(res.arrivalDate).toLocaleDateString() : 'Не указана';
 
     content.innerHTML = `
-        <h2>${res.fullName}</h2>
+        <h2 xmlns="http://www.w3.org/1999/html">${res.fullName}</h2>
         <div class="info-grid">
             <div class="info-section">
                 <h4>📇 Данные</h4>
                 <p><b>Телефон:</b> ${res.phoneNumber}</p>
                 <p><b>Комната:</b> ${room ? room.name : '---'}</p>
                 <p><b>Оплата:</b> ${stats.paid} / ${stats.total}</p>
+                <p><b>День приезда:</b> ${dateFormatted}</p>
+                
             </div>
             <div class="info-section">
                 <h4>📦 Залог</h4>
