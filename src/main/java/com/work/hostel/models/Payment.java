@@ -2,6 +2,7 @@ package com.work.hostel.models;
 
 import com.fasterxml.jackson.annotation.JsonBackReference;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
+import com.work.hostel.enums.PaymentType;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -26,6 +27,9 @@ public class Payment {
     @ManyToOne
             @JoinColumn(name = "accommodation_id")
     Accommodation accommodation;
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = true)
+    PaymentType paymentType;
     YearMonth month;
     int amount;
     boolean paid;

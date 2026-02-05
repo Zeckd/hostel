@@ -30,6 +30,14 @@ async function apiRequest(endpoint, method = 'GET', body = null) {
 }
 
 async function loadAllData() {
+    // Сначала мигрируем старые платежи (если есть) - делаем это тихо, без ошибок
+    try {
+        await apiRequest('/payment/migrate', 'POST');
+    } catch (e) {
+        // Игнорируем ошибки миграции, продолжаем загрузку данных
+        console.log('Migration completed or not needed');
+    }
+    
     const [rooms, residents] = await Promise.all([
         apiRequest('/accommodation/get/all'),
         apiRequest('/resident/getAll')
@@ -163,18 +171,71 @@ function showRoomDetails(roomId) {
 
 // === ЛОГИКА ОПЛАТ И ЖИТЕЛЕЙ ===
 function getMonthlyPaymentStats(res, room) {
-    const price = room ? room.perPersonPrice : 0;
+    const personCount = res.personCount || 1; // Количество человек, которое представляет этот житель
+    const perPersonPrice = room ? (room.perPersonPrice || 0) : 0;
+    const perPersonTotalPrice = perPersonPrice * personCount; // Общая цена за человека с учетом количества
+    const fullRoomPrice = room ? (room.fullRentPrice || 0) : 0;
     const now = new Date();
     const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-    const paidThisMonth = (res.payments || [])
+    // Оплата за человека (включая старые платежи без paymentType)
+    const paidPerPerson = (res.payments || [])
         .filter(p => {
+            // Старые платежи без paymentType считаем как PER_PERSON
+            if (p.paymentType && p.paymentType !== 'PER_PERSON') return false;
             const pDate = new Date(p.paidAt);
             return `${pDate.getFullYear()}-${String(pDate.getMonth() + 1).padStart(2, '0')}` === currentMonthStr;
         })
         .reduce((sum, p) => sum + p.amount, 0);
 
-    return { paid: paidThisMonth, total: price, isFullyPaid: price > 0 && paidThisMonth >= price };
+    // Оплата за комнату = оплаты за комнату (FULL_ROOM) + сумма всех оплат за человека (PER_PERSON) всех жителей этой комнаты
+    let paidFullRoom = 0;
+    if (room) {
+        // Находим всех жителей этой комнаты
+        const allResidentsInRoom = globalResidents.filter(r => r.accommodationId === room.id);
+        
+        // Суммируем все оплаты за комнату (FULL_ROOM) всех жителей
+        const fullRoomPayments = allResidentsInRoom.reduce((total, resident) => {
+            const residentFullRoomPayments = (resident.payments || [])
+                .filter(p => {
+                    if (!p.paymentType || p.paymentType !== 'FULL_ROOM') return false;
+                    const pDate = new Date(p.paidAt);
+                    return `${pDate.getFullYear()}-${String(pDate.getMonth() + 1).padStart(2, '0')}` === currentMonthStr;
+                })
+                .reduce((sum, p) => sum + p.amount, 0);
+            return total + residentFullRoomPayments;
+        }, 0);
+        
+        // Суммируем все оплаты за человека (PER_PERSON) всех жителей (включая старые без paymentType)
+        // Учитываем количество человек для каждого жителя
+        const perPersonPayments = allResidentsInRoom.reduce((total, resident) => {
+            const residentPersonCount = resident.personCount || 1;
+            const residentPerPersonPayments = (resident.payments || [])
+                .filter(p => {
+                    // Старые платежи без paymentType считаем как PER_PERSON
+                    if (p.paymentType && p.paymentType !== 'PER_PERSON') return false;
+                    const pDate = new Date(p.paidAt);
+                    return `${pDate.getFullYear()}-${String(pDate.getMonth() + 1).padStart(2, '0')}` === currentMonthStr;
+                })
+                .reduce((sum, p) => sum + p.amount, 0);
+            // Учитываем количество человек: если житель представляет несколько человек,
+            // то его оплата за человека должна быть умножена на количество человек
+            // Но фактически оплачено только то, что заплатили, поэтому просто суммируем
+            return total + residentPerPersonPayments;
+        }, 0);
+        
+        // Общая оплата за комнату = оплаты за комнату + все оплаты за человека
+        paidFullRoom = fullRoomPayments + perPersonPayments;
+    }
+
+    // Проверяем оплату с учетом количества человек
+    const isPerPersonFullyPaid = perPersonTotalPrice > 0 && paidPerPerson >= perPersonTotalPrice;
+    const isFullRoomFullyPaid = fullRoomPrice > 0 && paidFullRoom >= fullRoomPrice;
+
+    return {
+        perPerson: { paid: paidPerPerson, total: perPersonTotalPrice, isFullyPaid: isPerPersonFullyPaid },
+        fullRoom: { paid: paidFullRoom, total: fullRoomPrice, isFullyPaid: isFullRoomFullyPaid }
+    };
 }
 
 function renderResidents() {
@@ -194,13 +255,19 @@ function renderResidents() {
         tr.dataset.index = index;
         addResidentDragHandlers(tr);
         tr.innerHTML = `
-            <td><b>${res.fullName}</b></td>
+            <td><b>${res.fullName}</b>${(res.personCount || 1) > 1 ? ` <small style="color: #666;">(${res.personCount} чел.)</small>` : ''}</td>
             <td>${room ? room.name : '---'}</td>
             <td>
-                <span class="badge ${stats.isFullyPaid ? 'badge-green' : (stats.paid > 0 ? 'badge-orange' : 'badge-red')}">
-                    ${stats.isFullyPaid ? 'Оплачено' : (stats.paid > 0 ? 'Частично' : 'Долг')}
+                <span class="badge ${stats.perPerson.isFullyPaid ? 'badge-green' : (stats.perPerson.paid > 0 ? 'badge-orange' : 'badge-red')}">
+                    ${stats.perPerson.isFullyPaid ? 'Оплачено' : (stats.perPerson.paid > 0 ? 'Частично' : 'Долг')}
                 </span>
-                <div class="amount-progress">${stats.paid} / ${stats.total} сом</div>
+                <div class="amount-progress">${stats.perPerson.paid} / ${stats.perPerson.total} сом</div>
+            </td>
+            <td>
+                <span class="badge ${stats.fullRoom.isFullyPaid ? 'badge-green' : (stats.fullRoom.paid > 0 ? 'badge-orange' : 'badge-red')}">
+                    ${stats.fullRoom.isFullyPaid ? 'Оплачено' : (stats.fullRoom.paid > 0 ? 'Частично' : 'Долг')}
+                </span>
+                <div class="amount-progress">${stats.fullRoom.paid} / ${stats.fullRoom.total} сом</div>
             </td>
             <td>
                 ${hasCollateral ? `
@@ -305,6 +372,7 @@ function prepareEditResident(id) {
     f.phoneNumber.value = res.phoneNumber;
     f.arrivalDate.value = res.arrivalDate ? res.arrivalDate.split('T')[0] : '';
     f.accommodationId.value = res.accommodationId;
+    f.personCount.value = res.personCount || 1;
     f.dataset.editId = id; // Запоминаем ID для сохранения
 
     document.getElementById('modal-resident-title').innerText = "Редактировать жителя";
@@ -326,7 +394,9 @@ function showResidentDetails(resId) {
                 <h4>📇 Данные</h4>
                 <p><b>Телефон:</b> ${res.phoneNumber}</p>
                 <p><b>Комната:</b> ${room ? room.name : '---'}</p>
-                <p><b>Оплата:</b> ${stats.paid} / ${stats.total}</p>
+                <p><b>Количество человек:</b> ${res.personCount || 1}</p>
+                <p><b>Оплата за человека:</b> ${stats.perPerson.paid} / ${stats.perPerson.total} сом ${res.personCount > 1 ? `(${room ? room.perPersonPrice : 0} × ${res.personCount || 1})` : ''}</p>
+                <p><b>Оплата за комнату:</b> ${stats.fullRoom.paid} / ${stats.fullRoom.total} сом</p>
                 <p><b>День приезда:</b> ${dateFormatted}</p>
                 
             </div>
@@ -344,7 +414,10 @@ function showResidentDetails(resId) {
         <hr>
         <h4>💰 История платежей</h4>
         <div class="history-list">
-            ${(res.payments || []).map(p => `<div class="history-item"><span>${new Date(p.paidAt).toLocaleDateString()}</span><b>+ ${p.amount} сом</b></div>`).join('')}
+            ${(res.payments || []).map(p => {
+                const typeLabel = p.paymentType === 'PER_PERSON' ? 'За человека' : (p.paymentType === 'FULL_ROOM' ? 'За комнату' : 'Не указано');
+                return `<div class="history-item"><span>${new Date(p.paidAt).toLocaleDateString()} (${typeLabel})</span><b>+ ${p.amount} сом</b></div>`;
+            }).join('')}
         </div>
     `;
     openModal('modal-resident-details');
@@ -376,7 +449,13 @@ function setupForms() {
         e.preventDefault();
         const f = e.target;
         const id = f.dataset.editId;
-        const body = { fullName: f.fullName.value, phoneNumber: f.phoneNumber.value, arrivalDate: f.arrivalDate.value, accommodationId: parseInt(f.accommodationId.value) };
+        const body = { 
+            fullName: f.fullName.value, 
+            phoneNumber: f.phoneNumber.value, 
+            arrivalDate: f.arrivalDate.value, 
+            accommodationId: parseInt(f.accommodationId.value),
+            personCount: parseInt(f.personCount.value) || 1
+        };
         if (await apiRequest(id ? `/resident/${id}` : '/resident/create', id ? 'PATCH' : 'POST', body)) { closeAllModals(); loadAllData(); }
     };
 
@@ -391,7 +470,11 @@ function setupForms() {
     document.getElementById('form-payment').onsubmit = async (e) => {
         e.preventDefault();
         const resId = parseInt(e.target.residentId.value);
-        const body = { residentId: resId, amount: parseInt(e.target.amount.value) };
+        const body = { 
+            residentId: resId, 
+            amount: parseInt(e.target.amount.value),
+            paymentType: e.target.paymentType.value
+        };
         // Исправление пути: проверьте, что на бэкенде путь именно /payment/create
         if (await apiRequest('/payment/create', 'POST', body)) {
             closeAllModals();

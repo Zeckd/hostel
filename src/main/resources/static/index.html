@@ -45,7 +45,8 @@
                 <tr>
                     <th>Житель</th>
                     <th>Комната</th>
-                    <th>Оплата</th>
+                    <th>Оплата за человека</th>
+                    <th>Оплата за комнату</th>
                     <th>Залог</th>
                     <th>Действия</th>
                 </tr>
@@ -79,6 +80,7 @@
             <label>Телефон</label><input type="text" name="phoneNumber" required>
             <label>Дата заезда</label><input type="date" name="arrivalDate" required>
             <label>Комната</label><select name="accommodationId" id="select-room-resident" required></select>
+            <label>Количество человек</label><input type="number" name="personCount" min="1" value="1" required title="Сколько человек представляет этот житель (например, если это группа из 3 рабочих, укажите 3)">
             <button type="submit" class="btn-submit">Сохранить</button>
         </form>
     </div>
@@ -108,6 +110,11 @@
         <p id="pay-res-name" style="font-weight: bold; color: var(--primary);"></p>
         <form id="form-payment">
             <input type="hidden" name="residentId" id="pay-res-id">
+            <label>Тип оплаты</label>
+            <select name="paymentType" id="pay-type" required>
+                <option value="PER_PERSON">За человека</option>
+                <option value="FULL_ROOM">За всю комнату</option>
+            </select>
             <label>Сумма оплаты (сом)</label><input type="number" name="amount" required>
             <button type="submit" class="btn-submit">Подтвердить платеж</button>
         </form>

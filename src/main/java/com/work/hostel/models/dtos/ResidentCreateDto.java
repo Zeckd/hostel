@@ -9,6 +9,7 @@ public record ResidentCreateDto(
         String phoneNumber,
         @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
         LocalDate arrivalDate,
-        Long accommodationId
+        Long accommodationId,
+        Integer personCount
 ) {
 }

@@ -28,15 +28,23 @@ public class ResidentServiceImpl implements ResidentService {
     public ResidentDto create(ResidentCreateDto residentCreateDto) {
         Accommodation accommodation = accommodationRepo.findById(residentCreateDto.accommodationId()).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
 
+        int personCount = residentCreateDto.personCount() != null && residentCreateDto.personCount() > 0 ? residentCreateDto.personCount() : 1;
+        
+        // Проверяем свободные места с учетом количества человек
+        int totalPersonsInRoom = accommodation.getResidents().stream()
+                .mapToInt(r -> r.getPersonCount() != null ? r.getPersonCount() : 1)
+                .sum();
+        if (totalPersonsInRoom + personCount > accommodation.getMaxResidents()) {
+            throw new IllegalStateException("No free places");
+        }
+        
         Resident resident = Resident.builder()
                 .fullName(residentCreateDto.fullName())
                 .phoneNumber(residentCreateDto.phoneNumber())
                 .arrivalDate(residentCreateDto.arrivalDate())
+                .personCount(personCount)
                 .active(true)
                 .build();
-        if (accommodation.getResidents().size() >= accommodation.getMaxResidents()) {
-            throw new IllegalStateException("No free places");
-        }
         if(resident.getArrivalDate() == null) {
             resident.setArrivalDate(LocalDate.now());
         }
@@ -62,6 +70,9 @@ public class ResidentServiceImpl implements ResidentService {
         }
         if(residentUpdateDto.phoneNumber() != null) {
             resident.setPhoneNumber(residentUpdateDto.phoneNumber());
+        }
+        if(residentUpdateDto.personCount() != null && residentUpdateDto.personCount() > 0) {
+            resident.setPersonCount(residentUpdateDto.personCount());
         }
 
         residentRepo.save(resident);

@@ -19,4 +19,9 @@ public class PaymentController {
     public PaymentDto createPayment(@RequestBody PaymentCreateDto paymentCreateDto) {
         return paymentService.create(paymentCreateDto);
     }
+    
+    @PostMapping("/migrate")
+    public int migrateOldPayments() {
+        return paymentService.migrateOldPayments();
+    }
 }

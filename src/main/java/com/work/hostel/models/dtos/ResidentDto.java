@@ -12,6 +12,7 @@ public record ResidentDto(
         String phoneNumber,
         LocalDate arrivalDate,
         boolean active,
+        Integer personCount,
         Long accommodationId,
         List<PaymentDto> payments,
         CollateralDto collateral

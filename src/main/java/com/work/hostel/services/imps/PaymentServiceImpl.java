@@ -1,5 +1,6 @@
 package com.work.hostel.services.imps;
 
+import com.work.hostel.enums.PaymentType;
 import com.work.hostel.mappers.PaymentMapper;
 import com.work.hostel.models.Accommodation;
 import com.work.hostel.models.Payment;
@@ -32,22 +33,48 @@ public class PaymentServiceImpl implements PaymentService {
 
         Payment payment = Payment.builder()
                 .amount(paymentCreateDto.amount())
+                .paymentType(paymentCreateDto.paymentType())
                 .month(YearMonth.now())
                 .paidAt(LocalDateTime.now())
                 .accommodation(accommodation)
                 .build();
-        if(resident.getAccommodation().getPerPersonPrice() != 0){
-            int alreadyPaid = paymentRepo.sumPaidForMonth(resident.getId(), YearMonth.now());
 
-            int price = resident.getAccommodation().getPerPersonPrice();
-
-            int totalAfterPayment = alreadyPaid + payment.getAmount();
-            payment.setPaid(totalAfterPayment >= price);
+        YearMonth currentMonth = YearMonth.now();
+        
+        // Проверяем, полностью ли оплачено в зависимости от типа оплаты
+        if (paymentCreateDto.paymentType() == PaymentType.PER_PERSON) {
+            // Оплата за человека - проверяем только оплату конкретного жителя
+            if (accommodation.getPerPersonPrice() != null && accommodation.getPerPersonPrice() > 0) {
+                int alreadyPaid = paymentRepo.sumPaidForMonthByType(resident.getId(), currentMonth, PaymentType.PER_PERSON);
+                // Также учитываем старые платежи без paymentType для этого жителя
+                int oldPayments = paymentRepo.sumPaidForMonth(resident.getId(), currentMonth) - alreadyPaid;
+                int price = accommodation.getPerPersonPrice();
+                int totalAfterPayment = alreadyPaid + oldPayments + payment.getAmount();
+                payment.setPaid(totalAfterPayment >= price);
+            }
+        } else if (paymentCreateDto.paymentType() == PaymentType.FULL_ROOM) {
+            // Оплата за всю комнату - проверяем общую сумму всех оплат всех жителей комнаты
+            if (accommodation.getFullRentPrice() != null && accommodation.getFullRentPrice() > 0) {
+                // Сумма всех оплат за комнату (FULL_ROOM) всех жителей этой комнаты
+                int fullRoomPaid = paymentRepo.sumFullRoomPaidForMonthByAccommodation(accommodation.getId(), currentMonth, PaymentType.FULL_ROOM);
+                // Сумма всех оплат за человека (PER_PERSON) всех жителей этой комнаты (включая старые без paymentType)
+                int perPersonPaid = paymentRepo.sumPerPersonPaidForMonthByAccommodation(accommodation.getId(), currentMonth, PaymentType.PER_PERSON);
+                // Общая сумма оплат за комнату (включая текущий платеж)
+                int totalRoomPaid = fullRoomPaid + perPersonPaid + payment.getAmount();
+                int price = accommodation.getFullRentPrice();
+                payment.setPaid(totalRoomPaid >= price);
+            }
         }
 
         resident.addPayment(payment);
         paymentRepo.save(payment);
         return paymentMapper.toPaymentDto(payment);
+    }
+
+    @Override
+    public int migrateOldPayments() {
+        // Устанавливаем paymentType = PER_PERSON для всех платежей, где paymentType = null
+        return paymentRepo.updateNullPaymentTypes(PaymentType.PER_PERSON);
     }
 
 }

@@ -24,6 +24,8 @@ public class Resident {
     String phoneNumber;
     LocalDate arrivalDate;
     boolean active;
+    @Column(nullable = true)
+    Integer personCount; // Количество человек, которое представляет этот житель (по умолчанию 1)
     @ManyToOne
             @JoinColumn(name = "accommodation_id")
     Accommodation accommodation;
